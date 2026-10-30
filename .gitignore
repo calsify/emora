@@ -1,0 +1,35 @@
+third_party/
+
+# Python / Virtual Environment
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+env/
+venv/
+~/emora-env/
+
+# Project Outputs & Temp Files
+out/
+/tmp/
+*.jpg
+*.jpeg
+
+# Allow third_party structure, but ignore heavy model data inside it
+third_party/*
+!third_party/DECA/
+
+# Ignore specific downloaded asset files so they don't bloat Git repo
+third_party/DECA/data/*.pkl
+third_party/DECA/data/*.tar
+third_party/DECA/data/*.dat
+
+# Keep web assets
+!web/*
+
+# IDE & OS Files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

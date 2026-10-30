@@ -1,0 +1,159 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Arome viewer</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #1b1d22;
+      }
+      #ui {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        z-index: 2;
+      }
+      button {
+        padding: 8px 14px;
+        font-size: 15px;
+      }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="ui"><button id="play">▶ Speak</button></div>
+    <script type="module">
+      import * as THREE from "three";
+      import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+      const bust = "?t=" + Date.now();
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      document.body.appendChild(renderer.domElement);
+      const scene = new THREE.Scene();
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x444455, 1.2));
+      const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+      sun.position.set(1, 2, 3);
+      scene.add(sun);
+      const camera = new THREE.PerspectiveCamera(
+        30,
+        innerWidth / innerHeight,
+        0.01,
+        100,
+      );
+      const controls = new OrbitControls(camera, renderer.domElement);
+
+      // Viseme -> morph weights. Names are bilateral; ALIAS maps them onto ARKit L/R pairs.
+      const VISEME = {
+        X: {},
+        A: { mouthClose: 0.8 },
+        B: { jawOpen: 0.12, mouthSmile: 0.25 },
+        C: { jawOpen: 0.45 },
+        D: { jawOpen: 0.8 },
+        E: { jawOpen: 0.3, mouthFunnel: 0.6 },
+        F: { mouthPucker: 0.9, jawOpen: 0.1 },
+        G: { mouthRollLower: 0.7, mouthUpperUp: 0.4, jawOpen: 0.1 },
+        H: { jawOpen: 0.3 },
+      };
+      const ALIAS = {
+        mouthSmile: ["mouthSmileLeft", "mouthSmileRight"],
+        eyeBlink: ["eyeBlinkLeft", "eyeBlinkRight"],
+        mouthUpperUp: ["mouthUpperUpLeft", "mouthUpperUpRight"],
+      };
+      const NAMES = [
+        "jawOpen",
+        "mouthClose",
+        "mouthSmile",
+        "mouthFunnel",
+        "mouthPucker",
+        "mouthRollLower",
+        "mouthUpperUp",
+      ];
+      const cur = Object.fromEntries(NAMES.map((n) => [n, 0]));
+
+      const gltf = await new GLTFLoader().loadAsync("avatar.glb" + bust);
+      scene.add(gltf.scene);
+      const meshes = [];
+      gltf.scene.traverse((o) => {
+        if (o.isMesh && o.morphTargetDictionary) meshes.push(o);
+      });
+      console.log(
+        "morph targets:",
+        meshes.map((m) => Object.keys(m.morphTargetDictionary)),
+      );
+
+      // auto-frame whatever model we loaded
+      const box = new THREE.Box3().setFromObject(gltf.scene);
+      const size = box.getSize(new THREE.Vector3()).length(),
+        ctr = box.getCenter(new THREE.Vector3());
+      controls.target.copy(ctr);
+      camera.position.copy(ctr).add(new THREE.Vector3(0, 0, size * 1.3));
+      camera.near = size / 100;
+      camera.far = size * 20;
+      camera.updateProjectionMatrix();
+
+      const cues = (await (await fetch("cues.json" + bust)).json()).mouthCues;
+      const audio = new Audio("speech.wav" + bust);
+      document.getElementById("play").onclick = () => {
+        audio.currentTime = 0;
+        ci = 0;
+        audio.play();
+      };
+
+      function apply(name, v) {
+        for (const m of meshes)
+          for (const k of [name, ...(ALIAS[name] || [])]) {
+            const i = m.morphTargetDictionary[k];
+            if (i !== undefined) m.morphTargetInfluences[i] = v;
+          }
+      }
+      let ci = 0,
+        last = performance.now(),
+        nextBlink = 2,
+        blinkT = -1;
+      const cueAt = (t) => {
+        while (ci < cues.length - 1 && t >= cues[ci].end) ci++;
+        while (ci > 0 && t < cues[ci].start) ci--;
+        return cues[ci].value;
+      };
+      function tick(now) {
+        const dt = Math.min((now - last) / 1000, 0.1);
+        last = now;
+        const playing = !audio.paused && !audio.ended;
+        const tgt = VISEME[playing ? cueAt(audio.currentTime) : "X"];
+        const k = 1 - Math.exp(-dt * 30); // smoothing = cheap co-articulation
+        for (const n of NAMES) {
+          cur[n] += ((tgt[n] || 0) - cur[n]) * k;
+          apply(n, cur[n]);
+        }
+        nextBlink -= dt;
+        if (nextBlink < 0) {
+          blinkT = 0;
+          nextBlink = 2 + Math.random() * 3;
+        }
+        if (blinkT >= 0) {
+          blinkT += dt;
+          const p = blinkT / 0.18;
+          apply("eyeBlink", p >= 1 ? 0 : Math.sin(Math.PI * p));
+          if (p >= 1) blinkT = -1;
+        }
+        controls.update();
+        renderer.render(scene, camera);
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    </script>
+  </body>
+</html>
